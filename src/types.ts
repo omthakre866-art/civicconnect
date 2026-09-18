@@ -11,7 +11,7 @@ export interface User {
   name: string;
   email: string;
   role: UserRole;
-  passwordHash: string; // simulated werkzeug scrypt hash
+  passwordHash?: string; // simulated werkzeug scrypt hash or oauth
   department?: MunicipalDepartment; // for field officers
   badgeNumber?: string; // for field officers
   phone?: string;

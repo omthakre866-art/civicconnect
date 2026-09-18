@@ -1,0 +1,90 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 1. Global Catch-All Default Deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Connection Health Test Doc
+    match /test/{docId} {
+      allow read: if true;
+    }
+
+    // --- Helper Functions ---
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        request.auth.token.email == 'omthakre866@gmail.com' ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function isValidTicket(data) {
+      return data.id is string && data.id.size() <= 128 &&
+             data.title is string && data.title.size() <= 200 &&
+             data.category is string && data.category.size() <= 100 &&
+             data.department is string && data.department.size() <= 50 &&
+             data.status is string && data.status.size() <= 50 &&
+             data.citizenId is string && data.citizenId.size() <= 128;
+    }
+
+    function isValidUser(data) {
+      return data.id is string && data.id.size() <= 128 &&
+             data.name is string && data.name.size() <= 128 &&
+             data.email is string && data.email.size() <= 128 &&
+             data.role is string && data.role.size() <= 30;
+    }
+
+    // --- Admin Collection ---
+    match /admins/{userId} {
+      allow get: if isSignedIn();
+      allow list: if isAdmin();
+      allow write: if isAdmin();
+    }
+
+    // --- Users Collection ---
+    match /users/{userId} {
+      allow get: if isOwner(userId) || isAdmin();
+      allow list: if isAdmin();
+      allow create: if isSignedIn() && isValidId(userId) && isValidUser(incoming()) && request.auth.uid == userId;
+      allow update: if isSignedIn() && isValidId(userId) && isValidUser(incoming()) && (request.auth.uid == userId || isAdmin());
+      allow delete: if isAdmin();
+    }
+
+    // --- Tickets Collection ---
+    match /tickets/{ticketId} {
+      allow get: if true;
+      allow list: if true;
+      allow create: if isValidId(ticketId) && isValidTicket(incoming());
+      allow update: if isValidId(ticketId) && isValidTicket(incoming()) && (
+        isAdmin() ||
+        incoming().diff(existing()).affectedKeys().hasOnly(['status', 'resolutionProof', 'auditLog', 'updatedAt']) ||
+        incoming().diff(existing()).affectedKeys().hasOnly(['status', 'parentId', 'isEscalated', 'priority', 'slaHours', 'deadlineAt', 'reopenedCount', 'auditLog', 'updatedAt']) ||
+        incoming().diff(existing()).affectedKeys().hasOnly(['assignedOfficerId', 'assignedOfficerName', 'assignedOfficerDept', 'auditLog', 'updatedAt']) ||
+        incoming().diff(existing()).affectedKeys().hasOnly(['isEscalated', 'escalationLevel', 'priority', 'auditLog', 'updatedAt']) ||
+        incoming().diff(existing()).affectedKeys().hasOnly(['upvotes', 'upvotedBy', 'citizenRating', 'citizenFeedback', 'updatedAt'])
+      );
+      allow delete: if isAdmin();
+    }
+  }
+}

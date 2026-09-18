@@ -1,0 +1,84 @@
+{
+  "entities": {
+    "Ticket": {
+      "title": "Ticket",
+      "description": "A municipal complaint ticket with SLA tracking, geospatial telemetry, and verification proof.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "title": { "type": "string", "maxLength": 200 },
+        "description": { "type": "string", "maxLength": 2000 },
+        "category": { "type": "string", "maxLength": 100 },
+        "department": { "type": "string", "maxLength": 50 },
+        "priority": { "type": "string", "maxLength": 30 },
+        "status": { "type": "string", "maxLength": 50 },
+        "citizenId": { "type": "string", "maxLength": 128 },
+        "citizenName": { "type": "string", "maxLength": 128 },
+        "citizenPhone": { "type": "string", "maxLength": 30 },
+        "assignedOfficerId": { "type": "string", "maxLength": 128 },
+        "assignedOfficerName": { "type": "string", "maxLength": 128 },
+        "assignedOfficerDept": { "type": "string", "maxLength": 50 },
+        "lat": { "type": "number" },
+        "lng": { "type": "number" },
+        "address": { "type": "string", "maxLength": 300 },
+        "ward": { "type": "string", "maxLength": 100 },
+        "photoUrl": { "type": "string", "maxLength": 1000 },
+        "resolutionPhotoUrl": { "type": "string", "maxLength": 1000 },
+        "resolutionNotes": { "type": "string", "maxLength": 2000 },
+        "resolutionProofType": { "type": "string", "maxLength": 50 },
+        "createdAt": { "type": "string", "maxLength": 50 },
+        "updatedAt": { "type": "string", "maxLength": 50 },
+        "slaDeadline": { "type": "string", "maxLength": 50 },
+        "isEscalated": { "type": "boolean" },
+        "escalationLevel": { "type": "number" },
+        "clusterCount": { "type": "number" },
+        "upvotes": { "type": "number" },
+        "citizenRating": { "type": "number" },
+        "citizenFeedback": { "type": "string", "maxLength": 1000 }
+      },
+      "required": ["id", "title", "category", "department", "status", "citizenId", "lat", "lng"]
+    },
+    "User": {
+      "title": "User",
+      "description": "A user profile in CivicConnect, representing a citizen, officer, or executive.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "maxLength": 128 },
+        "email": { "type": "string", "maxLength": 128 },
+        "role": { "type": "string", "maxLength": 30 },
+        "phone": { "type": "string", "maxLength": 30 },
+        "department": { "type": "string", "maxLength": 50 },
+        "badgeNumber": { "type": "string", "maxLength": 50 },
+        "avatarUrl": { "type": "string", "maxLength": 1000 },
+        "createdAt": { "type": "string", "maxLength": 50 }
+      },
+      "required": ["id", "name", "email", "role"]
+    },
+    "Admin": {
+      "title": "Admin",
+      "description": "Authorized administrators list for role-based security access.",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string", "maxLength": 128 },
+        "role": { "type": "string", "maxLength": 30 },
+        "grantedAt": { "type": "string", "maxLength": 50 }
+      },
+      "required": ["email", "role"]
+    }
+  },
+  "firestore": {
+    "/tickets/{ticketId}": {
+      "schema": { "$ref": "#/entities/Ticket" },
+      "description": "Collection of municipal complaint tickets."
+    },
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "User profiles with role metadata."
+    },
+    "/admins/{userId}": {
+      "schema": { "$ref": "#/entities/Admin" },
+      "description": "Master administrative access list."
+    }
+  }
+}

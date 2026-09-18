@@ -25,6 +25,19 @@ import {
   simulateWerkzeugVerify,
   secureFilename,
 } from '../utils/engine';
+import { db, auth, handleFirestoreError, OperationType } from '../lib/firebase';
+import {
+  collection,
+  doc,
+  setDoc,
+  onSnapshot,
+} from 'firebase/firestore';
+import {
+  GoogleAuthProvider,
+  signInWithPopup,
+  signOut as firebaseSignOut,
+  onAuthStateChanged,
+} from 'firebase/auth';
 
 interface SubmitComplaintInput {
   title: string;
@@ -47,9 +60,11 @@ interface CivicContextType {
   users: User[];
   tickets: Ticket[];
   simulatedTimeMs: number;
+  firebaseConnected: boolean;
   
   // Auth
   login: (email: string, pass: string, portal: UserRole, adminKey?: string) => { success: boolean; error?: string };
+  loginWithGoogle: (portal: UserRole) => Promise<{ success: boolean; error?: string }>;
   register: (userData: {
     name: string;
     email: string;
@@ -138,6 +153,82 @@ export const CivicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   });
 
   const [simulatedTimeMs, setSimulatedTimeMs] = useState<number>(() => Date.now());
+  const [firebaseConnected, setFirebaseConnected] = useState<boolean>(false);
+
+  // Monitor Firebase Auth State
+  useEffect(() => {
+    const unsubAuth = onAuthStateChanged(auth, (fbUser) => {
+      if (fbUser) {
+        setFirebaseConnected(true);
+        const email = fbUser.email || '';
+        const isExecutive = email.toLowerCase() === 'omthakre866@gmail.com';
+        // If not already set or user logged in via Firebase
+        setCurrentUser((prev) => {
+          if (prev && prev.id === fbUser.uid) return prev;
+          const role: UserRole = isExecutive ? 'admin' : (prev?.role || 'citizen');
+          const syncedUser: User = {
+            id: fbUser.uid,
+            name: fbUser.displayName || prev?.name || 'Google User',
+            email: email || prev?.email || '',
+            role: role,
+            phone: fbUser.phoneNumber || prev?.phone,
+            avatarUrl: fbUser.photoURL || prev?.avatarUrl,
+            department: role === 'officer' ? (prev?.department || 'Roads') : undefined,
+            badgeNumber: role === 'officer' ? (prev?.badgeNumber || `OFF-${fbUser.uid.slice(0, 4)}`) : undefined,
+          };
+          return syncedUser;
+        });
+      }
+    });
+    return () => unsubAuth();
+  }, []);
+
+  // Firestore Real-Time Sync for Tickets
+  useEffect(() => {
+    let unsubscribe = () => {};
+    try {
+      const ticketsCol = collection(db, 'tickets');
+      unsubscribe = onSnapshot(
+        ticketsCol,
+        (snapshot) => {
+          setFirebaseConnected(true);
+          if (!snapshot.empty) {
+            const remoteTickets: Ticket[] = [];
+            snapshot.forEach((docSnap) => {
+              remoteTickets.push(docSnap.data() as Ticket);
+            });
+            remoteTickets.sort(
+              (a, b) => new Date(b.registeredAt || 0).getTime() - new Date(a.registeredAt || 0).getTime()
+            );
+            setTickets(remoteTickets);
+          } else {
+            // Seed initial data to Firestore
+            SEED_TICKETS.forEach(async (t) => {
+              try {
+                await setDoc(doc(db, 'tickets', t.id), t);
+              } catch (err) {
+                console.warn('[Firestore] Initial ticket seed notice:', err);
+              }
+            });
+          }
+        },
+        (error) => {
+          handleFirestoreError(error, OperationType.LIST, 'tickets');
+        }
+      );
+    } catch (e) {
+      console.warn('[Firestore] Real-time listener notice:', e);
+    }
+    return () => unsubscribe();
+  }, []);
+
+  const syncTicketToFirestore = async (ticket: Ticket) => {
+    try {
+      await setDoc(doc(db, 'tickets', ticket.id), ticket);
+    } catch (err) {
+      console.warn(`[Firestore] Sync ticket ${ticket.id} notice:`, err);
+    }
+  };
 
   // Save changes to localStorage
   useEffect(() => {
@@ -272,11 +363,68 @@ export const CivicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setUsers((prev) => [...prev, newUser]);
     setCurrentUser(newUser);
     setActivePortal(data.role);
+
+    // Sync to Firestore
+    try {
+      setDoc(doc(db, 'users', newUser.id), newUser).catch((e) => {
+        console.warn('[Firestore] Register sync notice:', e);
+      });
+    } catch (e) {
+      console.warn('[Firestore] Register sync notice:', e);
+    }
+
     return { success: true };
+  };
+
+  const loginWithGoogle = async (portal: UserRole): Promise<{ success: boolean; error?: string }> => {
+    try {
+      const provider = new GoogleAuthProvider();
+      const result = await signInWithPopup(auth, provider);
+      const googleUser = result.user;
+      const email = googleUser.email || '';
+      
+      const isExecutive = email.toLowerCase() === 'omthakre866@gmail.com' || portal === 'admin';
+      const actualRole: UserRole = isExecutive ? 'admin' : portal;
+
+      const newUser: User = {
+        id: googleUser.uid,
+        name: googleUser.displayName || 'Google User',
+        email: email,
+        role: actualRole,
+        phone: googleUser.phoneNumber || undefined,
+        avatarUrl: googleUser.photoURL || undefined,
+        department: actualRole === 'officer' ? 'Roads' : undefined,
+        badgeNumber: actualRole === 'officer' ? `OFF-${googleUser.uid.slice(0, 4)}` : undefined,
+      };
+
+      setUsers((prev) => {
+        const filtered = prev.filter((u) => u.id !== newUser.id);
+        return [...filtered, newUser];
+      });
+      setCurrentUser(newUser);
+      setActivePortal(actualRole);
+
+      // Persist profile to Firestore
+      try {
+        await setDoc(doc(db, 'users', newUser.id), newUser);
+      } catch (err) {
+        console.warn('[Firestore] User document sync notice:', err);
+      }
+
+      return { success: true };
+    } catch (error: any) {
+      console.error('Google Sign In Error:', error);
+      return { success: false, error: error?.message || 'Google sign-in was cancelled or failed.' };
+    }
   };
 
   const logout = () => {
     setCurrentUser(null);
+    try {
+      firebaseSignOut(auth).catch(() => {});
+    } catch (e) {
+      console.error(e);
+    }
   };
 
   const quickSwitchUser = (user: User) => {
@@ -457,6 +605,9 @@ export const CivicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       return updated;
     });
 
+    // Sync to Firestore
+    syncTicketToFirestore(newTicket);
+
     return {
       success: true,
       ticket: newTicket,
@@ -485,10 +636,10 @@ export const CivicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const childIds = target.childDuplicateIds || [];
       const timestamp = new Date(simulatedTimeMs).toISOString();
 
-      return prev.map((t) => {
+      const updatedList = prev.map((t) => {
         // Resolve target ticket
         if (t.id === ticketId) {
-          return {
+          const resolvedTicket: Ticket = {
             ...t,
             status: 'RESOLVED',
             resolutionProof: proof,
@@ -504,11 +655,13 @@ export const CivicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               ...t.auditLog,
             ],
           };
+          syncTicketToFirestore(resolvedTicket);
+          return resolvedTicket;
         }
 
         // Cascading Cluster Resolution: If child duplicate, resolve and link parent's resolution proof!
         if (childIds.includes(t.id) || t.parentId === ticketId) {
-          return {
+          const cascadedTicket: Ticket = {
             ...t,
             status: 'RESOLVED',
             resolutionProof: proof,
@@ -524,10 +677,14 @@ export const CivicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               ...t.auditLog,
             ],
           };
+          syncTicketToFirestore(cascadedTicket);
+          return cascadedTicket;
         }
 
         return t;
       });
+
+      return updatedList;
     });
 
     return { success: true };
@@ -546,12 +703,12 @@ export const CivicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       return prev.map((t) => {
         if (t.id === ticketId) {
           const newReopenCount = (t.reopenedCount || 0) + 1;
-          return {
+          const reopened = {
             ...t,
-            status: 'REOPENED',
+            status: 'REOPENED' as const,
             parentId: null, // Breaks duplicate link
             isEscalated: true,
-            priority: 'HIGH',
+            priority: 'HIGH' as const,
             slaHours: 24,
             deadlineAt: freshDeadline,
             reopenedCount: newReopenCount,
@@ -563,12 +720,14 @@ export const CivicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                 timestamp,
                 action: 'CITIZEN_AUDIT_REOPENED',
                 actorName: currentUser?.name || 'Citizen Auditor',
-                actorRole: 'citizen',
+                actorRole: 'citizen' as const,
                 details: `Resolution rejected by citizen: "${reason.trim()}". Duplicate link broken, priority elevated to HIGH, fresh 24h SLA initialized, alert dispatched to Municipal Commissioner.`,
               },
               ...t.auditLog,
             ],
           };
+          syncTicketToFirestore(reopened);
+          return reopened;
         }
         return t;
       });
@@ -714,7 +873,9 @@ export const CivicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         users,
         tickets,
         simulatedTimeMs,
+        firebaseConnected,
         login,
+        loginWithGoogle,
         register,
         logout,
         quickSwitchUser,
